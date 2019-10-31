@@ -95,7 +95,7 @@ static void db_close() {
 
 static void db_write(DBB_local *dl) {
 	DBB_global *dg = dl->dl_global;
-	
+
 	MDB_val mkey, mval;
 	MDB_txn *txn;
 	DBB_val dv;
@@ -177,6 +177,8 @@ static void db_read(DBB_local *dl) {
 	MDB_val key, data;
 	size_t read = 0;
 	size_t found = 0;
+    size_t notfound = 0;
+    size_t einval = 0;
 	int64_t bytes = 0;
 	char ckey[100];
 	int ikey;
@@ -209,6 +211,7 @@ static void db_read(DBB_local *dl) {
 
 	do {
 		uint64_t k;
+        int rc;
 		if (op == MDB_SET) {
 			k = DBB_random(dl->dl_rndctx) % FLAGS_num;
 			if (FLAGS_intkey)
@@ -219,7 +222,8 @@ static void db_read(DBB_local *dl) {
 			mdb_cursor_renew(txn, cursor);
 		}
 		read++;
-		if (!mdb_cursor_get(cursor, &key, &data, op)) {
+        rc = mdb_cursor_get(cursor, &key, &data, op);
+		if (!rc) {
 			if (FLAGS_compression) {
 				size_t size;
 				snappy_uncompressed_length((const char *)data.mv_data, data.mv_size, &size);
@@ -229,7 +233,11 @@ static void db_read(DBB_local *dl) {
 			}
 			found++;
 			bytes += key.mv_size + data.mv_size;
-		}
+		} else if (rc == MDB_NOTFOUND) {
+          notfound++;
+        } else if (rc == EINVAL) {
+          einval++;
+        }
 		if (op == MDB_SET)
 			mdb_txn_reset(txn);
 		DBB_opdone(dl);
@@ -241,8 +249,8 @@ static void db_read(DBB_local *dl) {
 	mdb_txn_abort(txn);
 
 	if (dl->dl_order == DO_RANDOM) {
-		char msg[100];
-		snprintf(msg, sizeof(msg), "(%zd of %zd found)", found, read);
+		char msg[200];
+		snprintf(msg, sizeof(msg), "(%zd found, %zd MDB_NOTFOUND, %zd EINVAL) of %zd", found, notfound, einval, read);
 		DBB_message(dl, msg);
 	}
 	if (FLAGS_compression)
